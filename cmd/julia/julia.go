@@ -22,7 +22,7 @@ const (
 	Height = 1440
 
 	SubPixels     = 10
-	MaxIterations = 1000
+	MaxIterations = 10000
 )
 
 func mainCmd() *cobra.Command {
@@ -56,7 +56,11 @@ func runCmd(cmd *cobra.Command, _ []string) error {
 	// px is the real size of each pixel.
 	px := viewHeight / float64(Height)
 
-	j := transforms.JuliaN{C: complex(0.7, 0.42), N: 6.0}
+	//j := transforms.JuliaN{C: complex(0.1, -0.72), N: 6.0}
+	//j := transforms.JuliaN{C: complex(0.101, -0.719), N: 6.0}
+	c := complex(0.09, -0.575)
+	j := transforms.JuliaN{C: c, N: 5.0}
+	j2 := transforms.JuliaN{C: c, N: 6.0}
 
 	yChannel := make(chan int)
 
@@ -94,7 +98,11 @@ func runCmd(cmd *cobra.Command, _ []string) error {
 
 						iterations := 0
 						for iterations < MaxIterations && cmplx.Abs(sz) < math.Pow(math.MaxFloat64, 1.0/6.0) {
-							sz = j.Next(sz)
+							if iterations%2 == 0 {
+								sz = j.Next(sz)
+							} else {
+								sz = j2.Next(sz)
+							}
 							iterations++
 						}
 
@@ -166,7 +174,7 @@ func runCmd(cmd *cobra.Command, _ []string) error {
 		})
 	}
 
-	f, err := os.Create(fmt.Sprintf("out-%s.png", time.Now().
+	f, err := os.Create(fmt.Sprintf("out/%s.png", time.Now().
 		Format("20060102150405")))
 	if err != nil {
 		return err
