@@ -53,7 +53,7 @@ type PixelBrightness struct {
 }
 
 const (
-	gIterations = 20
+	//gIterations = 20
 	bIterations = 100
 )
 
