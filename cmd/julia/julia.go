@@ -22,7 +22,7 @@ const (
 	Height = 1440
 
 	SubPixels     = 10
-	MaxIterations = 10000
+	MaxIterations = 1000
 )
 
 func mainCmd() *cobra.Command {
@@ -56,11 +56,8 @@ func runCmd(cmd *cobra.Command, _ []string) error {
 	// px is the real size of each pixel.
 	px := viewHeight / float64(Height)
 
-	//j := transforms.JuliaN{C: complex(0.1, -0.72), N: 6.0}
-	//j := transforms.JuliaN{C: complex(0.101, -0.719), N: 6.0}
-	c := complex(0.09, -0.575)
-	j := transforms.JuliaN{C: c, N: 5.0}
-	j2 := transforms.JuliaN{C: c, N: 6.0}
+	j := transforms.JuliaN{C: complex(0.09, -0.575), N: 5.0}
+	j2 := transforms.JuliaN{C: complex(0.09, -0.575), N: 6.0}
 
 	yChannel := make(chan int)
 
@@ -95,6 +92,7 @@ func runCmd(cmd *cobra.Command, _ []string) error {
 						sx := rx + px*rng.Float64()
 
 						sz := complex(sy, sx)
+						//start := sz
 
 						iterations := 0
 						for iterations < MaxIterations && cmplx.Abs(sz) < math.Pow(math.MaxFloat64, 1.0/6.0) {
@@ -110,7 +108,13 @@ func runCmd(cmd *cobra.Command, _ []string) error {
 							continue
 						}
 
-						pB := float64(iterations) + 1.0 - math.Log(math.Log(cmplx.Abs(sz)))/math.Log(6.0)
+						pB := 0.0
+						if iterations%2 == 0 {
+							pB = float64(iterations) + 1.0 - math.Log(math.Log(cmplx.Abs(sz)))/math.Log(5.0)
+						} else {
+							pB = float64(iterations) + 1.0 - math.Log(math.Log(cmplx.Abs(sz)))/math.Log(6.0)
+						}
+
 						b += pB
 					}
 
