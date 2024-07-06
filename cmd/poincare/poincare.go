@@ -14,6 +14,7 @@ import (
 	"math/rand"
 	"os"
 	"runtime"
+	"sort"
 	"sync"
 	"time"
 )
@@ -22,10 +23,21 @@ const (
 	Width  = 2560
 	Height = 1440
 
-	MinX = -0.5
-	MaxX = 2.5
-	MinY = -5.0
-	MaxY = 4.0
+	MinX = -30
+	MaxX = 30
+	MinY = 0.2
+	MaxY = 4
+
+	StartCycles = 10000
+
+	// Cycles = 1e6 => 15 seconds
+	Cycles = 1e9
+
+	InvDX = float64(Width) / (MaxX - MinX)
+	InvDY = float64(Height) / (MaxY - MinY)
+
+	DX = 1.0 / InvDX
+	DY = 1.0 / InvDY
 )
 
 var (
@@ -36,91 +48,98 @@ var (
 )
 
 func toPixel(y, yp float64) int {
-	// if y > MaxX {
-	// 	panic(y)
-	// }
-	// if y < MinX {
-	// 	panic(y)
-	// }
-	// if yp > MaxY {
-	// 	panic(yp)
-	// }
-	// if yp < MinY {
-	// 	panic(yp)
-	// }
+	//minY = math.Min(y, minY)
+	//maxY = math.Max(y, maxY)
+	//minYP = math.Min(yp, minYP)
+	//maxYP = math.Max(yp, maxYP)
 
-	// minY = math.Min(y, minY)
-	// maxY = math.Max(y, maxY)
-	// minYP = math.Min(yp, minYP)
-	// maxYP = math.Max(yp, maxYP)
+	if y > MaxX {
+		return -1
+	}
+	if y < MinX {
+		return -1
+	}
+	if yp > MaxY {
+		return -1
+	}
+	if yp < MinY {
+		return -1
+	}
 
-	px := (y - MinX) * float64(Width) / (MaxX - MinX)
-	py := (yp - MinY) * float64(Height) / (MaxY - MinY)
+	px := (y - MinX) * InvDX
+	py := (yp - MinY) * InvDY
 
 	return int(py)*Width + int(px)
 }
 
-func work(eq equations.SecondOrder, solver order2.Solver, t0, y0, yp0, h float64, n int, out chan int) (float64, float64) {
-	t := t0
+func work(eq equations.SecondOrder, solver order2.Solver, _, y0, yp0, h float64, n int, out chan map[int]int) (float64, float64) {
 	y := y0
 	yp := yp0
 
-	for i := 0; i < n; i++ {
-		y, yp = order2.Solve(solver, eq, t, y, yp, t+h, 1000)
-		t += h
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 
-		if out != nil {
-			out <- toPixel(y, yp)
-		}
+	result := make(map[int]int)
+	for i := 0; i < n; i++ {
+		y, yp = order2.Solve(solver, eq, 0.0, y, yp, h, 50)
+		result[toPixel(yp, y)]++
+
+		y += (-0.5 + rng.Float64()) * DY * 2
+		yp += (-0.5 + rng.Float64()) * DX * 2
 	}
+
+	if out != nil {
+		out <- result
+	}
+
 	return y, yp
 }
 
-func reduce(in chan int, out []int) {
+func reduce(in chan map[int]int, out []int) {
 	for i := range in {
-		if i >= len(out) || i < 0 {
-			continue
+		for k, v := range i {
+			if k >= len(out) || k < 0 {
+				continue
+			}
+			out[k] += v
 		}
-		out[i]++
 	}
 }
+
 func runCmd(cmd *cobra.Command, _ []string) error {
 	// At this point usage information has already been printed if obviously incorrect.
 	cmd.SilenceUsage = true
 
 	spring := models.DuffingOscillator{
-		Delta:     0.02,
-		Alpha:     1.0,
-		Beta:      5.0,
-		Gamma:     12.06,
-		Frequency: 0.5,
+		Delta:     0.018,
+		Alpha:     0.22,
+		Beta:      3.3,
+		Gamma:     32.657,
+		Frequency: 2.03,
 	}
 
 	fmt.Println(spring.Gamma)
 
-	results := make(chan int, 1000)
+	results := make(chan map[int]int, 100000)
 
 	wg := sync.WaitGroup{}
 	nWorkers := runtime.NumCPU()
+	//nWorkers = 1
 	wg.Add(nWorkers)
 
-	startYs := make([]float64, nWorkers)
-	startYPs := make([]float64, nWorkers)
-
-	rng := rand.New(rand.NewSource(time.Now().UnixMicro()))
-
 	for i := 0; i < nWorkers; i++ {
-		y0 := rng.Float64() - 0.5
-		startYs[i], startYPs[i] = work(spring.Acceleration, order2.RK4, 0.0, y0, 0.0, 2*math.Pi/spring.Frequency, 100, nil)
-	}
-
-	for i := 0; i < nWorkers; i++ {
-		y0 := startYs[i]
-		yp0 := startYPs[i]
 		go func() {
-			for n := 0; n < 30; n++ {
-				y0, yp0 = work(spring.Acceleration, order2.RK4, 0.0, y0, yp0, 2*math.Pi/spring.Frequency, 100, results)
-			}
+			rng := rand.New(rand.NewSource(time.Now().Unix() + int64(i)))
+			y0 := (MinY+MaxY)*0.5 + 10*DY*rng.Float64()
+			yp0 := (MinX+MaxX)*0.5 + 10*DX*rng.Float64()
+
+			h := 2 * math.Pi / spring.Frequency
+			y0, yp0 = work(spring.Acceleration, order2.RK4, 0.0, y0, yp0, h, StartCycles, nil)
+
+			work(spring.Acceleration, order2.RK4, 0.0, y0, yp0, h, Cycles, results)
+			//t0 += h * Cycles
+			//for s := 0; s < SimulationsPerWorker; s++ {
+			//}
+
 			wg.Done()
 		}()
 	}
@@ -145,22 +164,72 @@ func runCmd(cmd *cobra.Command, _ []string) error {
 			maxCount = c
 		}
 	}
+
+	heatMap := make(map[int]int)
+	for _, c := range counts {
+		heatMap[c]++
+	}
+
+	var heats []int
+	for heat := range heatMap {
+		heats = append(heats, heat)
+	}
+	sort.Ints(heats)
+
+	reverseHeats := make(map[int]int)
+	for i, heat := range heats {
+		reverseHeats[heat] = i
+	}
+
 	fmt.Println(maxCount)
 	fmt.Println(minY, maxY, minYP, maxYP)
 	for i, c := range counts {
-		y := math.MaxUint16 * c * 4 / (maxCount + 1)
-		if y > math.MaxUint16 {
-			y = math.MaxUint16
+
+		pHeat := float64(reverseHeats[c]) / float64(len(reverseHeats))
+
+		y := math.MaxUint16 * pHeat * 2
+		var col color.RGBA64
+		switch {
+		case y < 1*math.MaxUint16:
+			col = color.RGBA64{
+				R: 0,
+				G: 0,
+				B: uint16(y),
+				A: 0xffff,
+			}
+		case y < 1.5*math.MaxUint16:
+			col = color.RGBA64{
+				R: uint16(2 * (y - 1*math.MaxUint16)),
+				G: 0,
+				B: 0xffff,
+				A: 0xffff,
+			}
+		case y < 2*math.MaxUint16:
+			col = color.RGBA64{
+				R: 0xffff,
+				G: uint16(2 * (y - 1.5*math.MaxUint16)),
+				B: 0xffff,
+				A: 0xffff,
+			}
+		default:
+			col = color.RGBA64{
+				R: 0xffff,
+				G: 0xffff,
+				B: 0xffff,
+				A: 0xffff,
+			}
 		}
-		img.Set(i%Width, i/Width, color.Gray16{Y: uint16(y)})
+
+		img.Set(i%Width, i/Width, col)
 	}
 
-	out, err := os.Create(fmt.Sprintf("out/%d.png", time.Now().Unix()))
+	f, err := os.Create(fmt.Sprintf("out/%s.png", time.Now().
+		Format("20060102150405")))
 	if err != nil {
-		panic(err)
+		return err
 	}
 
-	err = png.Encode(out, img)
+	err = png.Encode(f, img)
 	if err != nil {
 		return err
 	}
@@ -175,6 +244,10 @@ func mainCmd() *cobra.Command {
 	}
 
 	return cmd
+}
+
+type CellCount struct {
+	Cell, Count int
 }
 
 func main() {
