@@ -21,13 +21,14 @@ const (
 	Width  = 2560
 	Height = 1440
 
-	SubPixels     = 1
+	// 1e4 = 25 seconds
+	SubPixels     = 100000
 	MaxIterations = 100
 
-	viewHeight = 1.2
+	viewHeight = 2
 
 	horizontalCenter = 0.0
-	verticalCenter   = -viewHeight / 2.0
+	verticalCenter   = 0.0
 
 	bottom = verticalCenter - viewHeight*0.5
 	top    = bottom + viewHeight
@@ -79,8 +80,11 @@ func runCmd(cmd *cobra.Command, _ []string) error {
 	// At this point usage information has already been printed if obviously incorrect.
 	cmd.SilenceUsage = true
 
-	j := transforms.JuliaN{C: complex(0.09, -0.575), N: 5.0}
-	j2 := transforms.JuliaN{C: complex(0.09, -0.575), N: 6.0}
+	j := transforms.JuliaN{C: complex(0.45, -0.575), N: 6.0}
+	l := transforms.Linear{
+		Multiply: cmplx.Rect(1.1, 0.3),
+		Add:      0.0,
+	}
 
 	yChannel := make(chan int)
 
@@ -91,8 +95,7 @@ func runCmd(cmd *cobra.Command, _ []string) error {
 		close(yChannel)
 	}()
 
-	greenChannel := make(chan []PixelBrightness, 10000)
-	blueChannel := make(chan []PixelBrightness, 10000)
+	paths := make(chan map[int]float64, 10000)
 
 	parallel := runtime.NumCPU()
 
@@ -115,6 +118,7 @@ func runCmd(cmd *cobra.Command, _ []string) error {
 				for x := 0; x < Width; x++ {
 					rx := low + width*float64(x)/float64(Height)
 
+					p := make(map[int]float64)
 					for s := 0; s < SubPixels; s++ {
 						// Slightly jitter points.
 						sy := ry + px*rng.Float64()
@@ -127,8 +131,8 @@ func runCmd(cmd *cobra.Command, _ []string) error {
 						for iterations < MaxIterations && cmplx.Abs(sz) < 10 {
 							if iterations%2 == 0 {
 								sz = j.Next(sz)
-							} else {
-								sz = j2.Next(sz)
+								sz = l.Next(sz)
+								sz += complex(rng.Float64()*2-1, rng.Float64()*2-1) * 1e-5
 							}
 							path[iterations] = sz
 
@@ -136,38 +140,19 @@ func runCmd(cmd *cobra.Command, _ []string) error {
 						}
 
 						if iterations < bIterations {
-							blues := make([]PixelBrightness, 0, iterations)
-							for _, z := range path[:iterations] {
+							for k, z := range path[:iterations] {
 								pixel := toP(z)
 								if pixel == -1 {
 									continue
 								}
 
-								blues = append(blues, PixelBrightness{
-									P:          pixel,
-									Brightness: 1.0,
-								})
+								p[pixel] += math.Min(0.1*float64(k), 1.0)
 
 							}
 
-							blueChannel <- blues
-						} else {
-							greens := make([]PixelBrightness, 0, iterations)
-							for _, z := range path[:iterations] {
-								pixel := toP(z)
-								if pixel == -1 {
-									continue
-								}
-
-								greens = append(greens, PixelBrightness{
-									P:          pixel,
-									Brightness: 1.0,
-								})
-							}
-
-							greenChannel <- greens
 						}
 					}
+					paths <- p
 				}
 			}
 
@@ -176,93 +161,48 @@ func runCmd(cmd *cobra.Command, _ []string) error {
 	}
 
 	iSP := 1.0 / SubPixels
-	green := make([]float64, Width*Height)
+	frequencies := make([]float64, Width*Height)
 
 	brightnessGroup := sync.WaitGroup{}
-	brightnessGroup.Add(2)
+	brightnessGroup.Add(1)
 	go func() {
-		for g := range greenChannel {
-			for _, g2 := range g {
-				green[g2.P] += g2.Brightness * iSP
-			}
-		}
-		brightnessGroup.Done()
-	}()
-
-	blue := make([]float64, Width*Height)
-	go func() {
-		for b := range blueChannel {
-			for _, b2 := range b {
-				blue[b2.P] += b2.Brightness * iSP
+		for g := range paths {
+			for pixel, count := range g {
+				frequencies[pixel] += iSP * count
 			}
 		}
 		brightnessGroup.Done()
 	}()
 
 	ywg.Wait()
-	close(greenChannel)
-	close(blueChannel)
+	close(paths)
 	brightnessGroup.Wait()
 
-	for i, g := range green {
-		green[i] = math.Pow(g, 0.2)
+	maxHits := 0.0
+	for _, h := range frequencies {
+		maxHits = math.Max(h, maxHits)
 	}
-	for i, b := range blue {
-		blue[i] = math.Pow(b, 0.2)
+	if maxHits <= 0.0 {
+		maxHits = 1.0
 	}
-
-	maxGreen := 0.0
-	for _, g := range green {
-		if g > maxGreen {
-			maxGreen = g
-		}
-	}
-	if maxGreen <= 0.0 {
-		maxGreen = 1.0
-	}
-
-	maxBlue := 0.0
-	for _, b := range blue {
-		if b > maxBlue {
-			maxBlue = b
-		}
-	}
-	if maxBlue <= 0.0 {
-		maxBlue = 1.0
-	}
+	invMaxHits := 1.0 / maxHits
 
 	img := image.NewRGBA64(image.Rect(0, 0, Width, Height))
 	for pixel := 0; pixel < Width*Height; pixel++ {
 		x := pixel % Width
 		y := pixel / Width
 
-		b := blue[pixel] * math.MaxUint16 * 2.5 / maxBlue
-		g := green[pixel] * math.MaxUint16 * 2.0 / maxGreen
-		r := 0.0
-
-		if b > math.MaxUint16 {
-			bExcess := b - math.MaxUint16
-			b = math.MaxUint16
-			g += bExcess
-			r = bExcess
-			if g > math.MaxUint16 {
-				r = g - math.MaxUint16
-				g = math.MaxUint16
-			}
-		} else if g > math.MaxUint16 {
-			gExcess := g - math.MaxUint16
-			g = math.MaxUint16
-			b += gExcess
-			r = gExcess
-			if b > math.MaxUint16 {
-				r = b - math.MaxUint16
-				b = math.MaxUint16
-			}
+		b := frequencies[pixel] * invMaxHits
+		b = math.Pow(b, 0.025)
+		//b = 1.0 - b
+		if frequencies[pixel] == 0 {
+			b = 0.0
 		}
+		b *= math.MaxUint16
 
 		img.Set(x, y, color.RGBA64{
-			R: uint16(r),
-			G: uint16(g),
+			R: uint16(b),
+			G: uint16(b),
 			B: uint16(b),
 			A: 0xffff,
 		})

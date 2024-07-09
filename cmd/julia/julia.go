@@ -56,8 +56,11 @@ func runCmd(cmd *cobra.Command, _ []string) error {
 	// px is the real size of each pixel.
 	px := viewHeight / float64(Height)
 
-	j := transforms.JuliaN{C: complex(0.09, -0.575), N: 5.0}
-	j2 := transforms.JuliaN{C: complex(0.09, -0.575), N: 6.0}
+	j := transforms.JuliaN{C: complex(0.45, -0.575), N: 6.0}
+	l := transforms.Linear{
+		Multiply: cmplx.Rect(1.1, 0.3),
+		Add:      0.0,
+	}
 
 	yChannel := make(chan int)
 
@@ -96,11 +99,9 @@ func runCmd(cmd *cobra.Command, _ []string) error {
 
 						iterations := 0
 						for iterations < MaxIterations && cmplx.Abs(sz) < math.Pow(math.MaxFloat64, 1.0/6.0) {
-							if iterations%2 == 0 {
-								sz = j.Next(sz)
-							} else {
-								sz = j2.Next(sz)
-							}
+							sz = j.Next(sz)
+							sz = l.Next(sz)
+
 							iterations++
 						}
 

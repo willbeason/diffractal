@@ -133,9 +133,10 @@ func runCmd(cmd *cobra.Command, _ []string) error {
 			yp0 := (MinX+MaxX)*0.5 + 10*DX*rng.Float64()
 
 			h := 2 * math.Pi / spring.Frequency
-			y0, yp0 = work(spring.Acceleration, order2.RK4, 0.0, y0, yp0, h, StartCycles, nil)
+			rk4 := order2.NewRungeKuttaSolver(order2.RK4())
+			y0, yp0 = work(spring.Acceleration, rk4, 0.0, y0, yp0, h, StartCycles, nil)
 
-			work(spring.Acceleration, order2.RK4, 0.0, y0, yp0, h, Cycles, results)
+			work(spring.Acceleration, rk4, 0.0, y0, yp0, h, Cycles, results)
 			//t0 += h * Cycles
 			//for s := 0; s < SimulationsPerWorker; s++ {
 			//}
