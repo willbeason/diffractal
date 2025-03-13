@@ -18,17 +18,18 @@ import (
 )
 
 const (
-	Width  = 2560
-	Height = 1440
+	Width     = 2560
+	Height    = 1440
+	invHeight = 1.0 / Height
 
 	// 1e4 = 25 seconds
 	SubPixels     = 100
 	MaxIterations = 100
 
-	viewHeight = 2
+	viewHeight = 1.2
 
 	horizontalCenter = 0.0
-	verticalCenter   = 0.0
+	verticalCenter   = -viewHeight / 2.0
 
 	bottom = verticalCenter - viewHeight*0.5
 	top    = bottom + viewHeight
@@ -58,7 +59,7 @@ const (
 	bIterations = 100
 )
 
-func toP(z complex128) int {
+func toP(z complex128) (int, int, float64, float64) {
 	x := real(z)
 	x -= left
 	x /= px
@@ -67,24 +68,24 @@ func toP(z complex128) int {
 	y = top - y
 	y /= px
 
-	if x < 0 || x >= Width {
-		return -1
+	dx := x - math.Floor(x)
+	dy := y - math.Floor(y)
+
+	if x < -1 || x >= Width {
+		return -2, -2, 0.0, 0.0
 	}
-	if y < 0 || y >= Height {
-		return -1
+	if y < -1 || y >= Height {
+		return -2, -2, 0.0, 0.0
 	}
-	return int(x) + int(y)*Width
+	//return int(x) + int(y)*Width, dx, dy
+	return int(x), int(y), dx, dy
 }
 
 func runCmd(cmd *cobra.Command, _ []string) error {
 	// At this point usage information has already been printed if obviously incorrect.
 	cmd.SilenceUsage = true
-
-	j := transforms.JuliaN{C: complex(0.45, -0.575), N: 6.0}
-	l := transforms.Linear{
-		Multiply: cmplx.Rect(1.1, 0.3),
-		Add:      0.0,
-	}
+	j := transforms.JuliaN{C: complex(0.09, -0.575), N: 5.0}
+	j2 := transforms.JuliaN{C: complex(0.09, -0.575), N: 6.0}
 
 	yChannel := make(chan int)
 
@@ -107,16 +108,15 @@ func runCmd(cmd *cobra.Command, _ []string) error {
 	for i := 0; i < parallel; i++ {
 		go func() {
 			rng := rand.New(rand.NewSource(int64(time.Now().Second())))
-			for y := range yChannel {
-				ry := low + width*float64(y)/float64(Height)
-				px := width / float64(Height)
+			path := make([]complex128, MaxIterations)
 
-				path := make([]complex128, MaxIterations)
+			for y := range yChannel {
+				ry := low + width*float64(y)*invHeight
 
 				//woh := float64(Width) / float64(Height)
 
 				for x := 0; x < Width; x++ {
-					rx := low + width*float64(x)/float64(Height)
+					rx := low + width*float64(x)*invHeight
 
 					p := make(map[int]float64)
 					for s := 0; s < SubPixels; s++ {
@@ -131,23 +131,41 @@ func runCmd(cmd *cobra.Command, _ []string) error {
 						for iterations < MaxIterations && cmplx.Abs(sz) < 10 {
 							if iterations%2 == 0 {
 								sz = j.Next(sz)
-								sz = l.Next(sz)
-								sz += complex(rng.Float64()*2-1, rng.Float64()*2-1) * 1e-5
+							} else {
+								sz = j2.Next(sz)
 							}
 							path[iterations] = sz
 
 							iterations++
 						}
 
-						if iterations < bIterations {
+						if iterations <= bIterations {
 							for k, z := range path[:iterations] {
-								pixel := toP(z)
-								if pixel == -1 {
+
+								lx, ly, dx, dy := toP(z)
+								if lx == -2 {
 									continue
 								}
 
-								p[pixel] += math.Min(0.1*float64(k), 1.0)
+								z00 := (1.0 - dx) * (1.0 - dy)
+								z01 := dx * (1.0 - dy)
+								z10 := (1.0 - dx) * dy
+								z11 := dx * dy
 
+								// int(x) + int(y)*Width
+								baseBrightness := math.Min(0.1*float64(k), 1.0)
+								if lx >= 0 && ly >= 0 {
+									p[lx+ly*Width] += baseBrightness * z00
+								}
+								if lx < Width-1 && ly >= 0 {
+									p[lx+1+ly*Width] += baseBrightness * z01
+								}
+								if lx >= 0 && ly < Height-1 {
+									p[lx+(ly+1)*Width] += baseBrightness * z10
+								}
+								if lx < Width-1 && ly < Height-1 {
+									p[lx+1+(ly+1)*Width] += baseBrightness * z11
+								}
 							}
 
 						}
@@ -160,7 +178,7 @@ func runCmd(cmd *cobra.Command, _ []string) error {
 		}()
 	}
 
-	iSP := 1.0 / SubPixels
+	//iSP := 1.0 / SubPixels
 	frequencies := make([]float64, Width*Height)
 
 	brightnessGroup := sync.WaitGroup{}
@@ -168,7 +186,7 @@ func runCmd(cmd *cobra.Command, _ []string) error {
 	go func() {
 		for g := range paths {
 			for pixel, count := range g {
-				frequencies[pixel] += iSP * count
+				frequencies[pixel] += count
 			}
 		}
 		brightnessGroup.Done()
@@ -178,31 +196,46 @@ func runCmd(cmd *cobra.Command, _ []string) error {
 	close(paths)
 	brightnessGroup.Wait()
 
+	for i, f := range frequencies {
+		frequencies[i] = math.Pow(f, 0.2)
+	}
+
 	maxHits := 0.0
 	for _, h := range frequencies {
 		maxHits = math.Max(h, maxHits)
+
 	}
 	if maxHits <= 0.0 {
 		maxHits = 1.0
 	}
+	fmt.Println("Max hits", maxHits)
 	invMaxHits := 1.0 / maxHits
 
 	img := image.NewRGBA64(image.Rect(0, 0, Width, Height))
+	baseWeight := math.MaxUint16 * 2.5 * invMaxHits
 	for pixel := 0; pixel < Width*Height; pixel++ {
 		x := pixel % Width
 		y := pixel / Width
 
-		b := frequencies[pixel] * invMaxHits
-		b = math.Pow(b, 0.025)
-		//b = 1.0 - b
-		if frequencies[pixel] == 0 {
-			b = 0.0
+		b := frequencies[pixel] * baseWeight
+		g := 0.0
+		r := 0.0
+
+		if b > math.MaxUint16 {
+			b = math.MaxUint16
+			g = b - math.MaxUint16
+			if g > math.MaxUint16 {
+				r = g - math.MaxUint16
+				g = math.MaxUint16
+			}
+			if r > math.MaxUint16 {
+				r = math.MaxUint16
+			}
 		}
-		b *= math.MaxUint16
 
 		img.Set(x, y, color.RGBA64{
-			R: uint16(b),
-			G: uint16(b),
+			R: uint16(r),
+			G: uint16(g),
 			B: uint16(b),
 			A: 0xffff,
 		})

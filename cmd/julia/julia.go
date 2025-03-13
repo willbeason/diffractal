@@ -22,7 +22,7 @@ const (
 	Height = 1440
 
 	SubPixels     = 10
-	MaxIterations = 1000
+	MaxIterations = 100
 )
 
 func mainCmd() *cobra.Command {
@@ -99,8 +99,11 @@ func runCmd(cmd *cobra.Command, _ []string) error {
 
 						iterations := 0
 						for iterations < MaxIterations && cmplx.Abs(sz) < math.Pow(math.MaxFloat64, 1.0/6.0) {
-							sz = j.Next(sz)
-							sz = l.Next(sz)
+							if iterations%2 == 0 {
+								sz = j.Next(sz)
+							} else {
+								sz = l.Next(sz)
+							}
 
 							iterations++
 						}
