@@ -22,7 +22,7 @@ const (
 	Height = 1440
 
 	// 1e4 = 25 seconds
-	SubPixels     = 100000
+	SubPixels     = 100
 	MaxIterations = 100
 
 	viewHeight = 2
@@ -207,6 +207,11 @@ func runCmd(cmd *cobra.Command, _ []string) error {
 			A: 0xffff,
 		})
 
+	}
+
+	err := os.MkdirAll("out", os.ModePerm)
+	if err != nil {
+		return err
 	}
 
 	f, err := os.Create(fmt.Sprintf("out/%s.png", time.Now().
