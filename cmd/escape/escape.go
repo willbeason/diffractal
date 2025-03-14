@@ -112,6 +112,8 @@ func runCmd(cmd *cobra.Command, _ []string) error {
 
 			for y := range yChannel {
 				ry := low + width*float64(y)*invHeight
+				// px is the simulated pixel starting point size, not viewport pixel size.
+				px := width / float64(Height)
 
 				//woh := float64(Width) / float64(Height)
 
