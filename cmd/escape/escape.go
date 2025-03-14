@@ -23,7 +23,7 @@ const (
 	invHeight = 1.0 / Height
 
 	// 1e4 = 25 seconds
-	SubPixels     = 100
+	SubPixels     = 1000
 	MaxIterations = 100
 
 	viewHeight = 1.2
@@ -139,7 +139,7 @@ func runCmd(cmd *cobra.Command, _ []string) error {
 							iterations++
 						}
 
-						if iterations <= bIterations {
+						if iterations < bIterations {
 							for k, z := range path[:iterations] {
 
 								lx, ly, dx, dy := toP(z)
