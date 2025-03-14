@@ -78,7 +78,7 @@ func toP(z complex128) (int, int, float64, float64) {
 		return -2, -2, 0.0, 0.0
 	}
 	//return int(x) + int(y)*Width, dx, dy
-	return int(x), int(y), dx, dy
+	return int(math.Floor(x)), int(math.Floor(y)), dx, dy
 }
 
 func runCmd(cmd *cobra.Command, _ []string) error {
@@ -222,15 +222,10 @@ func runCmd(cmd *cobra.Command, _ []string) error {
 		r := 0.0
 
 		if b > math.MaxUint16 {
+			bExcess := b - math.MaxUint16
 			b = math.MaxUint16
-			g = b - math.MaxUint16
-			if g > math.MaxUint16 {
-				r = g - math.MaxUint16
-				g = math.MaxUint16
-			}
-			if r > math.MaxUint16 {
-				r = math.MaxUint16
-			}
+			g = bExcess
+			r = bExcess
 		}
 
 		img.Set(x, y, color.RGBA64{
